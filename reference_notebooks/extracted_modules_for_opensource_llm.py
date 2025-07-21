@@ -1,6 +1,6 @@
 """
 MAP 대회 - 오픈소스 LLM용 추출 모듈
-ModernBERT 노트북에서 오픈소스 LLM(Gemma, Phi 등) 사용에 유용한 모듈들
+ModernBERT 및 Gemma 노트북에서 오픈소스 LLM(Gemma, Phi 등) 사용에 유용한 모듈들
 """
 
 import pandas as pd
@@ -12,6 +12,9 @@ from sklearn.metrics import average_precision_score
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Any
 import logging
+import os
+import keras
+import keras_nlp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -377,17 +380,269 @@ if __name__ == "__main__":
     processor = MAPDataProcessor()
     train_data = processor.load_and_preprocess_data("train.csv")
     train_data = processor.engineer_correctness_feature(train_data)
-    
+
     # 2. 프롬프트 엔지니어링
     prompt_engineer = PromptEngineer()
     prompts = prompt_engineer.create_prompts(train_data, template='detailed')
-    
+
     # 3. 토크나이징 (오픈소스 LLM용)
     tokenizer_manager = TokenizationManager("microsoft/phi-2", max_length=512)
     token_stats = tokenizer_manager.analyze_token_lengths(prompts)
-    
+
     # 4. 모델 훈련
     trainer = ModelTrainer("microsoft/phi-2", num_classes=processor.n_classes)
     trainer.initialize_model()
-    
+
     print("모듈 추출 완료! 오픈소스 LLM 사용 준비됨.") 
+
+
+class GemmaModelManager:
+    """Gemma 모델 관리 클래스 (Keras NLP 기반)"""
+
+    def __init__(self, model_name: str = "gemma_2b_en", backend: str = "jax"):
+        """
+        Args:
+            model_name: Gemma 모델명
+            backend: Keras 백엔드 ('jax', 'torch', 'tensorflow')
+        """
+        self.model_name = model_name
+        self.backend = backend
+        self.gemma_lm = None
+        self.optimizer = None
+
+        # 환경 설정
+        os.environ["KERAS_BACKEND"] = backend
+        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "1.00"
+
+        logger.info(f"Gemma 모델 매니저 초기화: {model_name} on {backend}")
+
+    def load_model(self, sequence_length: int = 512):
+        """
+        Gemma 모델 로드
+
+        Args:
+            sequence_length: 시퀀스 길이 제한
+        """
+        try:
+            self.gemma_lm = keras_nlp.models.GemmaCausalLM.from_preset(self.model_name)
+            self.gemma_lm.preprocessor.sequence_length = sequence_length
+            logger.info(f"Gemma 모델 로드 완료: {self.model_name}")
+        except Exception as e:
+            logger.error(f"Gemma 모델 로드 실패: {e}")
+            raise
+
+    def enable_lora(self, rank: int = 64):
+        """
+        LoRA 활성화 (효율적 파인튜닝)
+
+        Args:
+            rank: LoRA 랭크
+        """
+        if self.gemma_lm is None:
+            raise ValueError("먼저 모델을 로드해야 합니다.")
+
+        self.gemma_lm.backbone.enable_lora(rank=rank)
+        logger.info(f"LoRA 활성화 완료: rank={rank}")
+
+    def setup_optimizer(self, learning_rate: float = 5e-5, weight_decay: float = 0.01):
+        """
+        옵티마이저 설정
+
+        Args:
+            learning_rate: 학습률
+            weight_decay: 가중치 감쇠
+        """
+        self.optimizer = keras.optimizers.AdamW(
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+        )
+        # Layernorm과 bias는 weight decay에서 제외
+        self.optimizer.exclude_from_weight_decay(var_names=["bias", "scale"])
+        logger.info("옵티마이저 설정 완료")
+
+    def compile_model(self):
+        """모델 컴파일"""
+        if self.gemma_lm is None or self.optimizer is None:
+            raise ValueError("모델과 옵티마이저를 먼저 설정해야 합니다.")
+
+        self.gemma_lm.compile(
+            loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            optimizer=self.optimizer,
+            weighted_metrics=[keras.metrics.SparseCategoricalAccuracy()],
+        )
+        logger.info("모델 컴파일 완료")
+
+    def create_training_data(self, test_df: pd.DataFrame) -> List[str]:
+        """
+        York Yong의 템플릿을 사용한 훈련 데이터 생성
+
+        Args:
+            test_df: 테스트 데이터프레임
+
+        Returns:
+            훈련용 텍스트 리스트
+        """
+        MAP_dataset = []
+        for index, row in test_df.iterrows():
+            question, answer = row["QuestionText"], row["MC_Answer"]
+            template = f"QuestionText:\n{question}\n\nMC_Answer:\n{answer}"
+            MAP_dataset.append(template)
+
+        logger.info(f"훈련 데이터 생성 완료: {len(MAP_dataset)}개 샘플")
+        return MAP_dataset
+
+    def train(self, training_data: List[str], epochs: int = 1, batch_size: int = 1):
+        """
+        모델 훈련
+
+        Args:
+            training_data: 훈련 데이터
+            epochs: 에포크 수
+            batch_size: 배치 크기
+        """
+        if self.gemma_lm is None:
+            raise ValueError("먼저 모델을 로드하고 컴파일해야 합니다.")
+
+        logger.info(f"훈련 시작: {epochs} 에포크, 배치 크기 {batch_size}")
+
+        history = self.gemma_lm.fit(training_data, epochs=epochs, batch_size=batch_size)
+
+        logger.info("훈련 완료")
+        return history
+
+    def generate_response(self, prompt: str, max_length: int = 256) -> str:
+        """
+        텍스트 생성
+
+        Args:
+            prompt: 입력 프롬프트
+            max_length: 최대 생성 길이
+
+        Returns:
+            생성된 텍스트
+        """
+        if self.gemma_lm is None:
+            raise ValueError("먼저 모델을 로드해야 합니다.")
+
+        response = self.gemma_lm.generate(prompt, max_length=max_length)
+        return response
+
+
+class GemmaPromptEngineer:
+    """Gemma 전용 프롬프트 엔지니어링 클래스"""
+
+    def __init__(self):
+        self.templates = {
+            "math_question": self._math_question_template,
+            "comparison": self._comparison_template,
+            "fraction": self._fraction_template,
+            "step_by_step": self._step_by_step_template,
+        }
+
+    def _math_question_template(self, question: str, answer: str) -> str:
+        """수학 문제 템플릿"""
+        return f"QuestionText:\n{question}\n\nMC_Answer:\n{answer}"
+
+    def _comparison_template(self, question: str, answer: str) -> str:
+        """숫자 비교 템플릿"""
+        return f"Which number is the greatest {answer} or {answer}?\n\nQuestion: {question}"
+
+    def _fraction_template(self, question: str, answer: str) -> str:
+        """분수 문제 템플릿"""
+        return f"A triangle split into nine equal smaller triangles. Six of them are shaded. What fraction of the shape is not shaded?\n\nQuestion: {question}"
+
+    def _step_by_step_template(self, question: str, answer: str) -> str:
+        """단계별 추론 템플릿"""
+        return f"Let's solve this step by step:\n\nQuestion: {question}\n\nAnswer: {answer}\n\nStep-by-step solution:"
+
+    def create_prompt(
+        self, question: str, answer: str, template_type: str = "math_question"
+    ) -> str:
+        """
+        프롬프트 생성
+
+        Args:
+            question: 질문
+            answer: 답변
+            template_type: 템플릿 타입
+
+        Returns:
+            생성된 프롬프트
+        """
+        if template_type not in self.templates:
+            raise ValueError(f"지원하지 않는 템플릿 타입: {template_type}")
+
+        return self.templates[template_type](question, answer)
+
+
+class GemmaDataAnalyzer:
+    """Gemma 모델용 데이터 분석 클래스"""
+
+    def __init__(self):
+        self.train_data = None
+        self.test_data = None
+
+    def load_data(self, train_path: str, test_path: str):
+        """
+        데이터 로드
+
+        Args:
+            train_path: 훈련 데이터 경로
+            test_path: 테스트 데이터 경로
+        """
+        self.train_data = pd.read_csv(train_path)
+        self.test_data = pd.read_csv(test_path)
+
+        logger.info(
+            f"데이터 로드 완료: 훈련 {self.train_data.shape}, 테스트 {self.test_data.shape}"
+        )
+
+    def analyze_misconceptions(self):
+        """오해 분석"""
+        if self.train_data is None:
+            raise ValueError("먼저 데이터를 로드해야 합니다.")
+
+        # 오해 분포 분석
+        misconception_counts = self.train_data["Misconception"].value_counts()
+
+        # 상위 20개 오해
+        top_20 = misconception_counts.head(20)
+
+        # 하위 15개 오해
+        bottom_15 = misconception_counts.tail(15)
+
+        logger.info(f"오해 분석 완료: 총 {len(misconception_counts)}개 오해")
+        logger.info(f"상위 20개 오해: {len(top_20)}개")
+        logger.info(f"하위 15개 오해: {len(bottom_15)}개")
+
+        return {
+            "top_20": top_20,
+            "bottom_15": bottom_15,
+            "total_misconceptions": len(misconception_counts),
+        }
+
+    def analyze_categories(self):
+        """카테고리 분석"""
+        if self.train_data is None:
+            raise ValueError("먼저 데이터를 로드해야 합니다.")
+
+        category_counts = self.train_data["Category"].value_counts()
+        logger.info(f"카테고리 분석 완료: {len(category_counts)}개 카테고리")
+
+        return category_counts
+
+    def get_sample_questions(self, n: int = 5):
+        """
+        샘플 질문 추출
+
+        Args:
+            n: 샘플 수
+
+        Returns:
+            샘플 질문들
+        """
+        if self.test_data is None:
+            raise ValueError("먼저 데이터를 로드해야 합니다.")
+
+        samples = self.test_data.head(n)
+        return samples[["QuestionText", "MC_Answer", "StudentExplanation"]]
