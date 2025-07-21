@@ -62,22 +62,19 @@ MAP@3 = (1/N) * Σ(AP@3)
 MAP/
 ├── README.md                 # 프로젝트 설명서
 ├── data/                     # 데이터 파일
-│   ├── train/               # 훈련 데이터
-│   ├── test/                # 테스트 데이터
+│   ├── train.csv            # 훈련 데이터
+│   ├── test.csv             # 테스트 데이터
 │   └── sample_submission.csv # 제출 샘플
-├── notebooks/               # Jupyter 노트북
-│   ├── 01_data_exploration.ipynb
-│   ├── 02_feature_engineering.ipynb
-│   ├── 03_model_development.ipynb
-│   └── 04_submission.ipynb
-├── src/                     # 소스 코드
-│   ├── __init__.py
-│   ├── data_loader.py      # 데이터 로딩
-│   ├── preprocessing.py     # 전처리
-│   ├── models.py           # 모델 정의
-│   └── utils.py            # 유틸리티 함수
-├── models/                  # 저장된 모델
-├── requirements.txt         # 의존성 패키지
+├── eda/                     # EDA 대시보드 및 분석 도구
+│   ├── README.md            # EDA 폴더 설명서
+│   ├── EDA_README.md        # 상세한 EDA 가이드
+│   ├── data_analysis.py     # 기본 데이터 분석 스크립트
+│   ├── eda_dashboard.py     # Plotly Dash 대시보드
+│   ├── streamlit_eda.py     # Streamlit 대시보드
+│   ├── run_dash.py          # Dash 실행 스크립트
+│   └── run_streamlit.py     # Streamlit 실행 스크립트
+├── reference_notebooks/      # 참고 노트북
+├── requirements.txt          # 의존성 패키지
 └── .gitignore
 ```
 
@@ -105,12 +102,34 @@ pip install -r requirements.txt
 - `test.csv` → `data/test/`
 - `sample_submission.csv` → `data/`
 
-### 3. 노트북 실행 순서
+### 3. EDA 대시보드 실행
 
-1. **데이터 탐색**: `notebooks/01_data_exploration.ipynb`
-2. **특성 엔지니어링**: `notebooks/02_feature_engineering.ipynb`
-3. **모델 개발**: `notebooks/03_model_development.ipynb`
-4. **제출 파일 생성**: `notebooks/04_submission.ipynb`
+#### Plotly Dash 대시보드 (추천)
+```bash
+cd eda
+python run_dash.py
+```
+- 브라우저에서 `http://localhost:8050` 접속
+
+#### Streamlit 대시보드
+```bash
+cd eda
+python run_streamlit.py
+```
+- 브라우저에서 `http://localhost:8501` 접속
+
+#### 기본 데이터 분석
+```bash
+cd eda
+python data_analysis.py
+```
+
+### 4. 노트북 실행 순서
+
+1. **데이터 탐색**: `reference_notebooks/` 폴더의 노트북들
+2. **특성 엔지니어링**: EDA 대시보드를 활용한 데이터 분석
+3. **모델 개발**: 참고 노트북 기반 모델 개발
+4. **제출 파일 생성**: 최종 예측 및 제출
 
 ## 📝 제출 형식
 
