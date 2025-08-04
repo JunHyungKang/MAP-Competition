@@ -92,7 +92,6 @@ MAP-Competition/
 │   └── sample_submission.csv  # 제출 샘플
 ├── eda/                        # EDA 대시보드 및 분석 도구
 │   ├── README.md              # EDA 폴더 설명서
-│   ├── EDA_README.md          # 상세한 EDA 가이드
 │   ├── data_analysis.py       # 기본 데이터 분석 스크립트
 │   ├── eda_dashboard.py       # Plotly Dash 대시보드
 │   ├── streamlit_eda.py       # Streamlit 대시보드
